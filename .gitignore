@@ -1,0 +1,31 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Claude local files
+.claude/
+AGENTS.md
+CLAUDE.md
+
+# Knowledge graph output
+graphify-out/
+
+# Internal notes
+internal/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+requirements.lock
+
+# Node
+node_modules/
+dist/
+build/
+.next/
+
+# OS
+.DS_Store
