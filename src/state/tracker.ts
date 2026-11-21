@@ -103,7 +103,11 @@ export class Tracker {
       } else {
         const gap = t - tr.lastSeenT
         const ours = this.hitThisTick.get(m.id) ?? 0
-        if (gap < 0.35 && tr.hp - hp > ours + 1) tr.unexplainedLoss += tr.hp - hp - ours
+        // Count only drops a weapon explains (one drone hit is 25 HP) taken inside the zone (zone damage is not a fight).
+        const lost = tr.hp - hp - ours
+        const zn = obs.zone
+        const inZone = !zn || Math.hypot(m.pos[0] - zn.center[0], m.pos[1] - zn.center[1]) < zn.radius - 2
+        if (gap < 0.35 && lost >= 35 && inZone) tr.unexplainedLoss += lost
         const v = m.vel
         if (v && (v[0] !== 0 || v[1] !== 0 || v[2] !== 0)) (tr.vx = v[0]), (tr.vy = v[1]), (tr.vz = v[2])
         else if (gap > 0 && gap < 0.5) {

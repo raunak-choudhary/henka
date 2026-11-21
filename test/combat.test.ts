@@ -80,3 +80,12 @@ test("brain: answers every kit observation with a valid action and never throws"
     if (m.offer) assert.ok(Number.isInteger(a.pick))
   }
 })
+
+test("mode: HP lost outside the zone does not count", () => {
+  const tk = new Tracker(), md = new ModeDetector(true)
+  for (let k = 0; k <= 10; k++) {
+    const o = baseObs(30 + k * 0.1, { mechs: [{ ...mech(4, 80, 1400 - k * 45), pos: [600, 0, 0] }] })
+    tk.update(o); md.update(o, tk)
+  }
+  assert.equal(md.score, 0)
+})

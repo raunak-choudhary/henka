@@ -3,7 +3,7 @@ import type { World } from "./world/world.ts"
 import { PARAMS } from "./config.ts"
 import type { Rng } from "./rng.ts"
 
-export type MoveCmd = { move: [number, number]; jump: boolean; boost: boolean; jet: boolean }
+export type MoveCmd = { move: [number, number]; jump: boolean; boost: boolean; jet: boolean; conserve: boolean }
 
 export class Motion {
   w: World
@@ -18,6 +18,7 @@ export class Motion {
   stuckN = 0
   lastStuckT = -1e9
   jetUntil = -1
+  conserveUntil = -1
   detour: { x: number; y: number; until: number } | null = null
   lastSteer: [number, number] = [0, 0]
   plans = 0
@@ -47,7 +48,7 @@ export class Motion {
    * Returns a unit move vector plus jump/jet requests.
    */
   steer(t: number, x: number, y: number, z: number, gx: number, gy: number, energy: number, canPlan: boolean, moving = true): MoveCmd {
-    const out: MoveCmd = { move: [0, 0], jump: false, boost: false, jet: false }
+    const out: MoveCmd = { move: [0, 0], jump: false, boost: false, jet: false, conserve: false }
     if (this.detour && t < this.detour.until) {
       gx = this.detour.x
       gy = this.detour.y
@@ -81,6 +82,11 @@ export class Motion {
       gy = realY
       dGoal = dReal
       here = -1
+      // the goal is outside our pocket: save energy, then jump and jet over the edge toward it
+      if (this.w.loaded) {
+        if (energy >= 35 && t >= this.jetUntil) this.jetUntil = t + 1.0
+        else if (t >= this.jetUntil) out.conserve = true
+      }
     }
     // stuck detection, only while we actually command movement
     if (moving && dGoal > 3) {
@@ -93,6 +99,11 @@ export class Motion {
         this.hist = []
         this.planT = -1e9
         if (this.stuckN >= 2 && energy >= 40) this.jetUntil = t + 1.2
+        if (this.stuckN >= 2 && energy < 40) {
+          // save energy for the jet instead of moving on
+          this.stuckN = 1
+          this.conserveUntil = t + 3
+        }
         if (this.stuckN >= 3) {
           const a = this.rng.range(-Math.PI, Math.PI)
           this.detour = { x: x + Math.cos(a) * 25, y: y + Math.sin(a) * 25, until: t + 2.5 }
@@ -100,6 +111,7 @@ export class Motion {
         }
       } else if (h0 && Math.hypot(x - h0.x, y - h0.y) > 4) this.stuckN = 0
     } else this.hist = []
+    if (t < this.conserveUntil && t >= this.jetUntil) out.conserve = true
     if (t < this.jetUntil) {
       out.jump = true
       out.jet = true

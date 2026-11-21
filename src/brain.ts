@@ -108,6 +108,8 @@ export class Brain {
     this.wander = null
     this.slow = 0
     this.breakOff = false
+    this.zoneCache = null
+    this.zoneHold = false
     draw.clear()
   }
   warmMs = 0
@@ -149,6 +151,15 @@ export class Brain {
     const laser = sec?.kind === "laser" ? sec : null
     const lightning = sec?.kind === "lightning" ? sec : null
     const zp = zonePlan(t, x, y, me.in_zone, obs.zone, walk)
+    this.reachableZonePoint(zp, obs, x, y, z)
+    // hysteresis: once we head for the zone, keep going until well inside, so a goal just outside the edge
+    // cannot pull us back and forth across it
+    const zn = obs.zone
+    const inside = (px: number, py: number, m: number) => Math.hypot(px - zn.center[0], py - zn.center[1]) <= zn.radius - m
+    if (zp.mustGo) this.zoneHold = true
+    else if (this.zoneHold && !inside(x, y, 8)) zp.mustGo = true
+    else this.zoneHold = false
+    const safeGoal = (px: number, py: number) => inside(px, py, 6) && (t < zn.shrink_start - 15 || Math.hypot(px - zn.next_center[0], py - zn.next_center[1]) <= zn.next_radius - 6)
     const live = this.tk.live()
     const opening = t < P.quietUntil
 
@@ -159,7 +170,7 @@ export class Brain {
       if (!ffa) return true
       return this.ffaEngage(tr, d, t, hpFrac, obs)
     }
-    const target = chooseTarget(this.tk, x, y, t, this.targetId, engage)
+    const target = chooseTarget(this.tk, x, y, t, this.targetId, engage, ffa)
     this.targetId = target ? target.id : -1
     const tDist = target ? Math.hypot(target.x - x, target.y - y) : Infinity
     const tSize = target ? 1 + 0.05 * target.cubes : 1
@@ -187,7 +198,8 @@ export class Brain {
     let boost = false
     let moving = true
     let intent = "reposition"
-    const pick = this.loot.choose(obs, this.w)
+    let pick = this.loot.choose(obs, this.w)
+    if (pick && !safeGoal(pick.x, pick.y)) pick = null
     const pickD = pick ? Math.hypot(pick.x - x, pick.y - y) : Infinity
     const cubesSeen = (obs.cubes ?? []).map((c) => ({ x: c.pos[0], y: c.pos[1], z: c.pos[2] }))
     const cubeCap = P.cubeCap
@@ -198,7 +210,7 @@ export class Brain {
       for (const c of cubesSeen) {
         if (Math.abs(c.z - z) > 4) continue
         const d = Math.hypot(c.x - x, c.y - y)
-        if (d < bd && ((me.cubes ?? 0) < cubeCap || d < 12)) (bd = d), (nearCube = c)
+        if (d < bd && ((me.cubes ?? 0) < cubeCap || d < 12) && safeGoal(c.x, c.y)) (bd = d), (nearCube = c)
       }
     }
     const enemiesNear = live.filter((tr) => Math.hypot(tr.x - x, tr.y - y) < S.retreatCrowdRange).length
@@ -227,6 +239,16 @@ export class Brain {
     }
     if (target && target.hp / Math.max(1, target.maxHp) < S.retreatCancelTarget) this.retreatUntil = -1
 
+    // free-for-all: break off to heal when hurt and cover is near; no new fights until healed
+    const F = PARAMS.ffa
+    const ffaLate = ffa && (obs.alive <= F.lateAlive || obs.zone.next_radius <= F.lateRadius)
+    if (ffa && !ffaLate && t >= F.quietUntil) {
+      if (!this.breakOff && hpFrac < F.breakOffHp && live.length && !this.guard.over() && findCover(this.w, x, y, z, live, F.breakOffCover)) this.breakOff = true
+      if (this.breakOff && hpFrac >= F.reengageHp) this.breakOff = false
+    } else this.breakOff = false
+    const ffaQuiet = ffa && t < F.quietUntil && !ffaLate
+    const drop = (ffa || P.dropsInSquad) && !zp.mustGo ? this.chooseDrop(obs, x, y, walk, hpFrac) : null
+
     let cover: { x: number; y: number } | null = null
     if (zp.mustGo) {
       intent = "zone"
@@ -250,6 +272,33 @@ export class Brain {
       if (pickD <= (this.cfg.loot?.pickup_radius ?? 4) - 0.3 && Math.abs(pick.z - z) < 3.5) {
         act.take = pick.id
         if (sec) act.drop = 1
+      }
+    } else if (ffaQuiet && target && !this.guard.over()) {
+      // first minute of a free-for-all: return fire, break line of sight, never chase
+      intent = "evade"
+      cover = findCover(this.w, x, y, z, [target], 24)
+      if (cover) (gx = cover.x), (gy = cover.y)
+      else {
+        const b = Math.atan2(y - target.y, x - target.x)
+        gx = x + Math.cos(b) * 20
+        gy = y + Math.sin(b) * 20
+      }
+    } else if (this.breakOff && !this.guard.over() && (cover = findCover(this.w, x, y, z, live.length ? live : this.recentTracks(t), 24))) {
+      intent = "heal"
+      gx = cover.x
+      gy = cover.y
+    } else if (drop && (!target || ffa)) {
+      intent = "drop"
+      const d = Math.hypot(drop.pos[0] - x, drop.pos[1] - y)
+      if (d < drop.radius - 2) {
+        // inside the ring: keep moving a little so we are not a still target
+        const a = t * 1.3
+        gx = drop.pos[0] + Math.cos(a) * (drop.radius * 0.45)
+        gy = drop.pos[1] + Math.sin(a) * (drop.radius * 0.45)
+      } else {
+        gx = drop.pos[0]
+        gy = drop.pos[1]
+        boost = me.energy > 50 && d > 40
       }
     } else if (target) {
       intent = "fight"
@@ -296,7 +345,7 @@ export class Brain {
 
     const mv = this.motion.steer(t, x, y, z, gx, gy, me.energy, !this.guard.over(), moving)
     let move = mv.move
-    boost = boost || mv.jet
+    boost = (boost && !mv.conserve) || mv.jet
     if (opening && intent !== "zone" && !mv.jet) boost = false
     // dodge overlays movement
     const dz = dodgeVector(x, y, z, myH, myR, obs.projectiles, P.dodgeHorizon, P.dodgeMargin)
@@ -429,18 +478,111 @@ export class Brain {
     return false
   }
   breakOff = false
+  zoneHold = false
+  private zoneCache: { key: string; comp: number; x: number; y: number } | null = null
+
+  /**
+   * The zone plan's target can sit in a pocket we cannot walk into (a plateau or walled yard). Replace it
+   * with the nearest point inside the next circle that is in our own walkable component.
+   */
+  private reachableZonePoint(zp: { tx: number; ty: number }, obs: Observation, x: number, y: number, z: number) {
+    if (!this.w.loaded) return
+    const g = this.w.grid
+    const here = g.nearestPass(g.idx(x, y), -1, 3, z)
+    if (here < 0) return
+    const comp = g.comp[here]
+    const k = g.idx(zp.tx, zp.ty)
+    if (g.pass[k] && g.comp[k] === comp) return
+    const near = g.nearestPass(k, comp, 6)
+    if (near >= 0) {
+      zp.tx = g.cx(near)
+      zp.ty = g.cy(near)
+      return
+    }
+    const zn = obs.zone
+    const key = `${zn.next_center[0].toFixed(0)},${zn.next_center[1].toFixed(0)},${zn.next_radius}`
+    if (!this.zoneCache || this.zoneCache.key !== key || this.zoneCache.comp !== comp) {
+      let best = -1, bd = Infinity
+      for (const f of [0.2, 0.45, 0.7]) {
+        for (let a = 0; a < 24; a++) {
+          const ang = (a / 24) * 2 * Math.PI
+          const c = g.nearestPass(g.idx(zn.next_center[0] + Math.cos(ang) * zn.next_radius * f, zn.next_center[1] + Math.sin(ang) * zn.next_radius * f), comp, 4)
+          if (c < 0) continue
+          if (Math.hypot(g.cx(c) - zn.next_center[0], g.cy(c) - zn.next_center[1]) > zn.next_radius * 0.85) continue
+          const d = Math.hypot(g.cx(c) - x, g.cy(c) - y)
+          if (d < bd) (bd = d), (best = c)
+        }
+      }
+      if (best < 0) {
+        // our pocket does not reach the next circle: go to its cell closest to the next centre;
+        // motion then jumps and jets over the edge from there
+        for (let i = 0; i < g.comp.length; i++) {
+          if (!g.pass[i] || g.comp[i] !== comp) continue
+          const d = Math.hypot(g.cx(i) - zn.next_center[0], g.cy(i) - zn.next_center[1])
+          if (d < bd) (bd = d), (best = i)
+        }
+        if (best >= 0) {
+          // aim 20 m past that edge cell so motion walks off it (or jets over it)
+          const ex = g.cx(best), ey = g.cy(best)
+          const dl = Math.max(1e-6, Math.hypot(zn.next_center[0] - ex, zn.next_center[1] - ey))
+          this.zoneCache = { key, comp, x: ex + ((zn.next_center[0] - ex) / dl) * 20, y: ey + ((zn.next_center[1] - ey) / dl) * 20 }
+        } else this.zoneCache = { key, comp, x: zp.tx, y: zp.ty }
+      } else this.zoneCache = { key, comp, x: g.cx(best), y: g.cy(best) }
+    }
+    zp.tx = this.zoneCache.x
+    zp.ty = this.zoneCache.y
+  }
+
+  /** Tracks seen in the last 20 s (positions may be stale): used only for where not to stand. */
+  private recentTracks(t: number): Track[] {
+    const out: Track[] = []
+    for (const tr of this.tk.mechs.values()) if (t - tr.lastSeenT < 20) out.push(tr)
+    return out
+  }
+
+  /** Supply drop worth taking now (SDD 5.5), or null. */
+  private chooseDrop(obs: Observation, x: number, y: number, walk: number, hpFrac: number) {
+    if (!(hpFrac < 0.8 || (obs.self.cubes ?? 0) < 10)) return null
+    let best: Observation["drops"][number] | null = null
+    let bd = Infinity
+    for (const d of obs.drops ?? []) {
+      if (d.holder !== null && d.holder !== undefined && d.holder !== obs.self.id) continue
+      const dist = Math.hypot(d.pos[0] - x, d.pos[1] - y)
+      if (dist * 1.2 > 150) continue
+      if (d.lands_in > dist / walk + 3) continue
+      if (this.w.loaded && Math.abs(d.pos[2] - this.w.ground(d.pos[0], d.pos[1])) > 3) continue // on a roof
+      let crowded = false
+      for (const tr of this.tk.mechs.values()) {
+        if (obs.t - tr.lastSeenT < 5 && Math.hypot(tr.x - d.pos[0], tr.y - d.pos[1]) < 60) crowded = true
+      }
+      if (crowded) continue
+      if (dist < bd) (bd = dist), (best = d)
+    }
+    return best
+  }
 
   private pickWander(obs: Observation, x: number, y: number): { x: number; y: number; until: number } {
     const z = obs.zone
     const g = this.w.grid
+    let best: { x: number; y: number; until: number } | null = null
+    let bestS = -Infinity
     for (let k = 0; k < 12; k++) {
       const a = this.rng.range(-Math.PI, Math.PI)
       const r = this.rng.range(15, 50)
       const qx = x + Math.cos(a) * r, qy = y + Math.sin(a) * r
       if (Math.hypot(qx - z.next_center[0], qy - z.next_center[1]) > z.next_radius * 0.6) continue
       if (this.w.loaded && !g.pass[g.idx(qx, qy)]) continue
-      return { x: qx, y: qy, until: obs.t + 8 }
+      if (this.mode.mode !== "ffa") return { x: qx, y: qy, until: obs.t + 8 }
+      // free-for-all: prefer spots far from every mech we know about and hidden from them
+      let near = Infinity, seen = 0
+      for (const tr of this.recentTracks(obs.t)) {
+        near = Math.min(near, Math.hypot(tr.x - qx, tr.y - qy))
+        if (Math.hypot(tr.x - qx, tr.y - qy) < 220 && this.w.los(tr.x, tr.y, tr.z + 8, qx, qy, this.w.grid.height[g.idx(qx, qy)] + 4.5)) seen++
+      }
+      const sc = Math.min(near, PARAMS.ffa.keepAway) - 60 * seen
+      if (sc > bestS) (bestS = sc), (best = { x: qx, y: qy, until: obs.t + 6 })
     }
+    if (best) return best
     return { x: z.next_center[0], y: z.next_center[1], until: obs.t + 4 }
   }
 
