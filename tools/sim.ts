@@ -52,6 +52,9 @@ export function simulate(M: Match, seat: number, opts: { maxT?: number } = {}): 
   let worstStuck = 0, stuckStart = -1, outside = 0, dist = 0
   let pendingEvents: any[] = []
   let alive = 16
+  let prevT = -1
+  let prevHp = -1
+  const prevRow = new Map<number, any[]>()
   const origErr = console.error
   console.error = (...a: unknown[]) => {
     errors++
@@ -92,17 +95,33 @@ export function simulate(M: Match, seat: number, opts: { maxT?: number } = {}): 
     }
     const rec = f.m.find((r: any[]) => r[0] === seat)
     const hp = Math.max(1, Math.min(maxHp, rec ? (rec[6] / Math.max(1, rec[10])) * maxHp : maxHp))
+    if (prevHp >= 0 && hp < prevHp - 1) {
+      // recorded damage to the seat we replace: attribute it to the nearest other mech
+      let by: number | null = null, bd = 1e9, bear: number | null = null
+      for (const r of f.m) {
+        if (r[0] === seat) continue
+        const d = Math.hypot(r[1] - x, r[2] - y)
+        if (d < bd) (bd = d), (by = r[0]), (bear = Math.atan2(r[2] - y, r[1] - x))
+      }
+      pendingEvents.push({ type: "damaged", amount: prevHp - hp, weapon: "gun", bearing: bear, by })
+    }
+    prevHp = hp
     const zone = zoneAt(t)
     const inZone = Math.hypot(x - zone.center[0], y - zone.center[1]) <= zone.radius
     if (!inZone) outside += 0.1
     const mechs: any[] = []
+    const dtf = prevT >= 0 ? Math.max(0.05, t - prevT) : 0.1
+    prevT = t
     for (const r of f.m) {
+      const pr = prevRow.get(r[0])
+      prevRow.set(r[0], r)
       if (r[0] === seat) continue
+      const vel = pr ? [(r[1] - pr[1]) / dtf, (r[2] - pr[2]) / dtf, 0] : [0, 0, 0]
       const h = 9 * (1 + 0.05 * r[9])
       if (visible(r[1], r[2], r[3], h)) seen.set(r[0], t)
       if (t - (seen.get(r[0]) ?? -99) <= (cfg.vision.memory_s ?? 5)) {
         const ws = [r[11], r[12]].filter((s: number) => s >= 0).map((s: number) => kinds[s])
-        mechs.push({ id: r[0], kind: "mech", pos: [r[1], r[2], r[3]], vel: [0, 0, 0], aim: [r[4], r[5]], hp: r[6], max_hp: r[10], cubes: r[9], weapons: ws, charging: (r[8] & 4) !== 0 })
+        mechs.push({ id: r[0], kind: "mech", pos: [r[1], r[2], r[3]], vel, aim: [r[4], r[5]], hp: r[6], max_hp: r[10], cubes: r[9], weapons: ws, charging: (r[8] & 4) !== 0 })
       }
     }
     for (const n of f.n ?? []) if (visible(n[1], n[2], n[3], 3.5)) mechs.push({ id: n[0], kind: "npc", pos: [n[1], n[2], n[3]], vel: [0, 0, 0], aim: [n[4], 0], hp: n[5], max_hp: 350 })

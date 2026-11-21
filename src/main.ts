@@ -5,6 +5,6 @@ import { Brain } from "./brain.ts"
 run((hello: Hello) => {
   const t0 = performance.now()
   const brain = new Brain(hello)
-  console.error(`henka: world ${brain.w.loaded ? "loaded" : "FLAT"} in ${(performance.now() - t0).toFixed(0)} ms`)
+  console.error(`henka: world ${brain.w.loaded ? "loaded" : "FLAT"} build ${brain.w.buildMs.toFixed(0)} ms, warm-up ${brain.warmMs.toFixed(0)} ms, ready after ${(performance.now() - t0).toFixed(0)} ms`)
   return { name: "henka", act: (obs) => brain.act(obs) }
 })

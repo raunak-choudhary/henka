@@ -28,6 +28,7 @@ export const PARAMS = {
     breakSightChargeS: 0.4,
     breakSightCoverM: 8,
     berserk: false,
+    detectMode: false,
     dropsInSquad: false,
     crateShots: false,
     crateShotRange: 25,
