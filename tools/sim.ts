@@ -10,7 +10,7 @@ import type { Hello, Observation } from "../src/mechfight.ts"
 import { loadMatches, type Match } from "./cast.ts"
 import { wrap } from "../src/vec.ts"
 
-const KIT = "../internal/research/kits/mech/mechfight-kit"
+const KIT = process.env.MECH_KIT ?? "../internal/research/kits/mech/mechfight-kit"
 const kitHello = (): Hello => {
   const lines = gunzipSync(readFileSync(`${KIT}/check/stream.jsonl.gz`)).toString("utf8").split("\n")
   return JSON.parse(lines[0])

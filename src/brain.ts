@@ -120,12 +120,13 @@ export class Brain {
   act(obs: Observation): Act {
     this.guard.start()
     try {
-      return this.sanitize(this.decide(obs), obs)
+      return this.sanitize(this.decide(normalizeObs(obs, this.lastZone)), obs)
     } catch (e) {
       console.error("decide failed", obs?.tick, e)
-      return { move: this.lastMove, aim: this.lastAim }
+      return { move: this.lastMove, aim: this.lastAim, fire: [false, false], boost: false, jump: false, reload: false }
     }
   }
+  lastZone: any = null
 
   private decide(obs: Observation): Act {
     const P = PARAMS.common
@@ -601,6 +602,7 @@ export class Brain {
   }
 
   private sanitize(a: Act, obs: Observation): Act {
+    this.lastZone = obs.zone
     const st = obs.self.stats ?? {}
     let mx = finite(a.move?.[0] ?? 0), my = finite(a.move?.[1] ?? 0)
     const l = Math.hypot(mx, my)
@@ -622,4 +624,51 @@ export class Brain {
     this.lastAim = a.aim
     return a
   }
+}
+
+const isVec = (v: unknown, n: number) => Array.isArray(v) && v.length >= n && v.slice(0, n).every((c) => typeof c === "number" && Number.isFinite(c))
+const arr = (v: unknown): any[] => (Array.isArray(v) ? v.filter((e) => e && typeof e === "object") : [])
+
+/**
+ * Make an observation safe for decide(): every list an array of objects, entries without a usable
+ * position dropped, missing vectors filled. A real server never sends these, but one bad field must
+ * not cost a whole decision. Mutates and returns obs.
+ */
+export function normalizeObs(obs: any, lastZone: any): Observation {
+  const o = obs
+  const me = o.self
+  if (!isVec(me.pos, 3)) me.pos = isVec(me.pos, 2) ? [me.pos[0], me.pos[1], 0] : [0, 0, 0]
+  if (!isVec(me.vel, 2)) me.vel = [0, 0, 0]
+  if (!isVec(me.aim, 2)) me.aim = [0, 0]
+  if (!Number.isFinite(me.hp)) me.hp = 1
+  if (!Number.isFinite(me.max_hp) || me.max_hp <= 0) me.max_hp = 1400
+  if (!Number.isFinite(me.energy)) me.energy = 0
+  if (!Array.isArray(me.weapons)) me.weapons = [null, null]
+  me.weapons = [me.weapons[0] && typeof me.weapons[0] === "object" ? me.weapons[0] : null, me.weapons[1] && typeof me.weapons[1] === "object" ? me.weapons[1] : null]
+  if (!Number.isFinite(o.t)) o.t = 0
+  if (!Number.isFinite(o.alive)) o.alive = 16
+  o.events = arr(o.events).filter((e) => typeof e.type === "string")
+  const withPos = (l: unknown) => arr(l).filter((e) => isVec(e.pos, 3))
+  o.mechs = withPos(o.mechs)
+  for (const m of o.mechs) {
+    if (!isVec(m.vel, 2)) m.vel = [0, 0, 0]
+    if (!isVec(m.aim, 2)) m.aim = [0, 0]
+    if (!Number.isFinite(m.hp)) m.hp = 1400
+    if (!Number.isFinite(m.max_hp) || m.max_hp <= 0) m.max_hp = 1400
+    if (!Array.isArray(m.weapons)) m.weapons = []
+  }
+  o.projectiles = withPos(o.projectiles)
+  for (const p of o.projectiles) if (!isVec(p.vel, 3)) p.vel = [0, 0, 0]
+  o.crates = withPos(o.crates)
+  o.cubes = withPos(o.cubes)
+  o.pickups = withPos(o.pickups)
+  o.drops = withPos(o.drops)
+  o.sounds = arr(o.sounds)
+  o.beams = arr(o.beams)
+  const z = o.zone
+  if (!z || !isVec(z.center, 2) || !isVec(z.next_center, 2) || !Number.isFinite(z.radius) || !Number.isFinite(z.next_radius)) {
+    o.zone = lastZone ?? { center: [41.3, -72.8], radius: 560, next_center: [41.3, -72.8], next_radius: 380, shrink_start: 60, shrink_end: 110, dps: 20 }
+  }
+  if (o.offer && !Array.isArray(o.offer.choices)) o.offer = null
+  return o as Observation
 }

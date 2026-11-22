@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { gunzipSync } from "node:zlib"
 import { World } from "../src/world/world.ts"
-export const KIT = new URL("../../internal/research/kits/mech/mechfight-kit/", import.meta.url).pathname
+export const KIT = process.env.MECH_KIT ? process.env.MECH_KIT.replace(/\/?$/, "/") : new URL("../../internal/research/kits/mech/mechfight-kit/", import.meta.url).pathname
 export const ARENA = KIT + "arena"
 let w: World | null = null
 export const world = () => (w ??= World.load(ARENA, ["v2/world.json", "v2/terrain.i16"]))
