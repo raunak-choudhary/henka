@@ -28,7 +28,7 @@ export const PARAMS = {
     breakSightChargeS: 0.4,
     breakSightCoverM: 8,
     berserk: false,
-    detectMode: true,
+    detectMode: false, // practice is always squad mode; a false ffa latch makes the bot passive
     dropsInSquad: false,
     crateShots: false,
     crateShotRange: 25,
