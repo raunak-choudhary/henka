@@ -89,3 +89,18 @@ test("mode: HP lost outside the zone does not count", () => {
   }
   assert.equal(md.score, 0)
 })
+
+test("squad engage: skips a far, healthy, idle mech; takes close, weak, closing or attacking ones", () => {
+  const hello = kitStream()[0]
+  hello.map.dir = ARENA
+  const b = new Brain(hello) as any
+  const tr = (o: any = {}) => ({ id: 3, x: 200, y: 0, z: 0, vx: 0, vy: 0, hp: 1400, maxHp: 1400, aimingAtUs: false, lastHitUsT: -99, ...o })
+  const eng = (o: any, t = 60) => b.squadEngage(tr(o), Math.hypot(tr(o).x, tr(o).y), t, t - tr(o).lastHitUsT < 6, 0, 0)
+  assert.equal(eng({}), false)
+  assert.equal(eng({ x: 100 }), true)
+  assert.equal(eng({ hp: 600 }), true)
+  assert.equal(eng({ vx: -5 }), true)
+  assert.equal(eng({ aimingAtUs: true }), true)
+  assert.equal(eng({ lastHitUsT: 58 }), true)
+  assert.equal(eng({}, 250), true)
+})

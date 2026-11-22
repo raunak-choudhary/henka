@@ -167,7 +167,7 @@ export class Brain {
     const engage = (tr: Track, d: number) => {
       const hitUs = t - tr.lastHitUsT < 6
       if (opening) return hitUs || d <= P.openingShootRange
-      if (!ffa) return true
+      if (!ffa) return this.squadEngage(tr, d, t, hitUs, x, y)
       return this.ffaEngage(tr, d, t, hpFrac, obs)
     }
     const target = chooseTarget(this.tk, x, y, t, this.targetId, engage, ffa)
@@ -461,6 +461,16 @@ export class Brain {
     const cap = (this.cfg.cubes?.stat_cap as number) ?? 10
     const per = (this.cfg.cubes?.damage_per_cube as number) ?? 0.04
     return (s.damage ?? 315) * f * (1 + per * Math.min(cubes, cap))
+  }
+
+  /** Squad engage rule: skip far, healthy mechs that are neither closing on us nor shooting at us. */
+  private squadEngage(tr: Track, d: number, t: number, hitUs: boolean, x: number, y: number): boolean {
+    const S = PARAMS.squad
+    if (!S.selective || t >= S.engageAllAfter) return true
+    if (hitUs || tr.id === this.targetId || d <= S.engageClose || tr.aimingAtUs) return true
+    if (tr.hp <= S.engageHpFrac * tr.maxHp) return true
+    const closing = -((tr.x - x) * tr.vx + (tr.y - y) * tr.vy) / Math.max(1, d)
+    return closing > S.engageClosingSpeed
   }
 
   /** Free-for-all engage rule (SDD 5.4). */

@@ -47,6 +47,12 @@ export const PARAMS = {
     retreatHpAlone: 0,
     retreatCancelTarget: 0.25,
     retreatS: 1.5,
+    // selective engage: only mechs that are close, weak, closing, aiming at or hitting us (keeps regen windows)
+    selective: true,
+    engageClose: 120,
+    engageHpFrac: 0.5,
+    engageClosingSpeed: 2,
+    engageAllAfter: 200,
   },
   ffa: {
     quietUntil: 60,
