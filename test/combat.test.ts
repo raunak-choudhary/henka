@@ -4,6 +4,7 @@ import { dodgeVector } from "../src/tactics/dodge.ts"
 import { Tracker } from "../src/state/tracker.ts"
 import { ModeDetector } from "../src/state/mode.ts"
 import { Brain } from "../src/brain.ts"
+import { CubeMemory } from "../src/tactics/loot.ts"
 import { kitStream, ARENA } from "./helpers.ts"
 
 const baseObs = (t: number, extra: any = {}) => ({
@@ -103,4 +104,18 @@ test("squad engage: skips a far, healthy, idle mech; takes close, weak, closing 
   assert.equal(eng({ aimingAtUs: true }), true)
   assert.equal(eng({ lastHitUsT: 58 }), true)
   assert.equal(eng({}, 250), true)
+})
+
+test("cube memory: keeps a far cube after it leaves view; drops it when we are near and it is gone or a mech stands on it", () => {
+  const m = new CubeMemory()
+  m.update(baseObs(10, { cubes: [{ id: 5001, pos: [100, 0, 0] }, { id: 5002, pos: [-100, 0, 0] }] }), 45, [])
+  m.update(baseObs(11), 45, [])
+  assert.equal(m.list().length, 2)
+  m.update(baseObs(12), 45, [{ x: -99, y: 1 }])
+  assert.deepEqual(m.list().map((c) => c.x), [100])
+  m.update(baseObs(13, { self: { ...baseObs(0).self, pos: [90, 0, 0] } }), 45, [])
+  assert.equal(m.list().length, 0)
+  m.update(baseObs(14, { cubes: [{ id: 5003, pos: [100, 0, 0] }] }), 45, [])
+  m.update(baseObs(60), 45, [])
+  assert.equal(m.list().length, 0)
 })

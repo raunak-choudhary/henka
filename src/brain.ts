@@ -12,7 +12,7 @@ import { ModeDetector } from "./state/mode.ts"
 import { zonePlan } from "./tactics/zone.ts"
 import { solveAim, errorAfterSlew, tolerance } from "./tactics/aim.ts"
 import { pickUpgrade } from "./tactics/upgrades.ts"
-import { LootMemory } from "./tactics/loot.ts"
+import { LootMemory, CubeMemory } from "./tactics/loot.ts"
 import { chooseTarget } from "./tactics/target.ts"
 import { choosePosition, findCover } from "./tactics/position.ts"
 import { dodgeVector } from "./tactics/dodge.ts"
@@ -29,6 +29,7 @@ export class Brain {
   tk = new Tracker()
   mode: ModeDetector
   loot = new LootMemory()
+  cubeMem = new CubeMemory()
   lastMove: [number, number] = [0, 0]
   lastAim: [number, number] = [0, 0]
   intent = "idle"
@@ -97,6 +98,7 @@ export class Brain {
     this.tk = new Tracker()
     this.mode = new ModeDetector(this.mode.enabled)
     this.loot = new LootMemory()
+    this.cubeMem = new CubeMemory()
     this.rng = new Rng(seed)
     this.motion = new Motion(this.w, this.rng)
     this.targetId = -1
@@ -201,11 +203,13 @@ export class Brain {
     let pick = this.loot.choose(obs, this.w)
     if (pick && !safeGoal(pick.x, pick.y)) pick = null
     const pickD = pick ? Math.hypot(pick.x - x, pick.y - y) : Infinity
-    const cubesSeen = (obs.cubes ?? []).map((c) => ({ x: c.pos[0], y: c.pos[1], z: c.pos[2] }))
+    this.cubeMem.update(obs, this.cfg.vision?.near_range ?? 45, live)
+    const cubesSeen = P.cubeMemory ? this.cubeMem.list() : (obs.cubes ?? []).map((c) => ({ x: c.pos[0], y: c.pos[1], z: c.pos[2] }))
+    const postKill = t - this.tk.lastKillT < P.cubePostKillS
     const cubeCap = P.cubeCap
     let nearCube: { x: number; y: number } | null = null
     {
-      const lim = target ? P.cubeDetourFight : P.cubeDetourIdle
+      const lim = target ? (postKill ? P.cubeDetourPostKill : P.cubeDetourFight) : P.cubeDetourIdle
       let bd = lim
       for (const c of cubesSeen) {
         if (Math.abs(c.z - z) > 4) continue
@@ -318,7 +322,7 @@ export class Brain {
         gx = x - Math.sin(b) * this.strafe * 6
         gy = y + Math.cos(b) * this.strafe * 6
       }
-      if (nearCube && Math.hypot(nearCube.x - x, nearCube.y - y) < P.cubeDetourFight) {
+      if (nearCube && Math.hypot(nearCube.x - x, nearCube.y - y) < (postKill ? P.cubeDetourPostKill : P.cubeDetourFight)) {
         gx = nearCube.x
         gy = nearCube.y
         intent = "fight+cube"

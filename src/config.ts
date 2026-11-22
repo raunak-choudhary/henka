@@ -6,8 +6,12 @@ export const PARAMS = {
     openingShootRange: 50,
     laserPickupRange: 250,
     lightningPickupRange: 120,
-    cubeDetourIdle: 60,
+    cubeDetourIdle: 130,
     cubeDetourFight: 25,
+    cubeMemory: true, // remember cubes out of view (kill drops at laser range are otherwise never fetched)
+    cubeMemoryS: 30,
+    cubePostKillS: 12,
+    cubeDetourPostKill: 70,
     cubeCap: 10,
     pathCap: 6000,
     replanS: 0.5,

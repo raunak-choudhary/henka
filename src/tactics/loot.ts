@@ -52,3 +52,26 @@ export class LootMemory {
     return best
   }
 }
+
+/** Power cubes remembered after they leave view (obs lists them only while seen), so kill drops are collected. */
+export class CubeMemory {
+  cubes = new Map<number, { x: number; y: number; z: number; seenT: number }>()
+
+  update(obs: Observation, nearRange: number, mechs: { x: number; y: number }[]) {
+    const seen = new Set<number>()
+    for (const c of obs.cubes ?? []) {
+      seen.add(c.id)
+      this.cubes.set(c.id, { x: c.pos[0], y: c.pos[1], z: c.pos[2], seenT: obs.t })
+    }
+    const [x, y] = obs.self.pos
+    for (const [id, c] of this.cubes) {
+      const d = Math.hypot(c.x - x, c.y - y)
+      // gone: inside our all-round sensor and not listed, picked up by someone standing on it, or stale
+      if ((!seen.has(id) && d < nearRange * 0.8) || obs.t - c.seenT > PARAMS.common.cubeMemoryS || mechs.some((m) => Math.hypot(m.x - c.x, m.y - c.y) < 3.5)) this.cubes.delete(id)
+    }
+  }
+
+  list(): { x: number; y: number; z: number }[] {
+    return [...this.cubes.values()]
+  }
+}
