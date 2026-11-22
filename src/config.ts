@@ -43,8 +43,8 @@ export const PARAMS = {
     finishSelfFrac: 0.45,
     retreatCrowd: 2,
     retreatCrowdRange: 160,
-    retreatHpCrowd: 0.5,
-    retreatHpAlone: 0.3,
+    retreatHpCrowd: 0, // retreat off: hunters know where we are, so backing off only stops our damage
+    retreatHpAlone: 0,
     retreatCancelTarget: 0.25,
     retreatS: 1.5,
   },
