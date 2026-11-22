@@ -9,7 +9,7 @@ import { World } from "./world/world.ts"
 import { Motion } from "./motion.ts"
 import { Tracker, type Track } from "./state/tracker.ts"
 import { ModeDetector } from "./state/mode.ts"
-import { zonePlan } from "./tactics/zone.ts"
+import { zonePlan, rimTiming } from "./tactics/zone.ts"
 import { solveAim, errorAfterSlew, tolerance } from "./tactics/aim.ts"
 import { pickUpgrade } from "./tactics/upgrades.ts"
 import { LootMemory } from "./tactics/loot.ts"
@@ -109,6 +109,8 @@ export class Brain {
     this.slow = 0
     this.breakOff = false
     this.zoneCache = null
+    this.zonePath = null
+    this.rimGoal = null
     this.zoneHold = false
     draw.clear()
   }
@@ -152,7 +154,27 @@ export class Brain {
     const laser = sec?.kind === "laser" ? sec : null
     const lightning = sec?.kind === "lightning" ? sec : null
     const zp = zonePlan(t, x, y, me.in_zone, obs.zone, walk)
+    if (P.rimHold) {
+      // keep one ring point per circle while we walk to it: recomputing it from our position each tick can
+      // land it in a building whose nearest open cell flips between two sides, and we walk back and forth
+      const zk = `${obs.zone.next_center[0].toFixed(0)},${obs.zone.next_center[1].toFixed(0)},${obs.zone.next_radius}`
+      const moving = Math.hypot(zp.tx - x, zp.ty - y) > 0.5
+      if (!moving) this.rimGoal = null
+      else if (this.rimGoal && this.rimGoal.key === zk) (zp.tx = this.rimGoal.x), (zp.ty = this.rimGoal.y)
+    }
+    const ringX = zp.tx, ringY = zp.ty
     this.reachableZonePoint(zp, obs, x, y, z)
+    if (P.rimHold && Math.hypot(ringX - x, ringY - y) > 0.5) {
+      const zk = `${obs.zone.next_center[0].toFixed(0)},${obs.zone.next_center[1].toFixed(0)},${obs.zone.next_radius}`
+      // cache the ring point itself (before the pocket fallback, which depends on where we stand); a fixed
+      // goal cell also keeps the motion layer's snap to an open cell fixed
+      if (!this.rimGoal || this.rimGoal.key !== zk) this.rimGoal = { key: zk, x: ringX, y: ringY }
+    }
+    if (P.rimHold) {
+      // time the leave on the walking path, not the straight line: walls can double the way in
+      const straight = Math.hypot(zp.tx - x, zp.ty - y)
+      if (straight > 10) rimTiming(zp, t, x, y, me.in_zone, obs.zone, this.zonePathLen(x, y, z, zp.tx, zp.ty, t, straight), walk)
+    }
     // hysteresis: once we head for the zone, keep going until well inside, so a goal just outside the edge
     // cannot pull us back and forth across it
     const zn = obs.zone
@@ -332,10 +354,15 @@ export class Brain {
       intent = "regen"
       gx = cover.x
       gy = cover.y
-    } else if (!zp.insideNext || zp.distNext > obs.zone.next_radius * 0.6) {
+    } else if (P.rimHold ? zp.should : !zp.insideNext || zp.distNext > obs.zone.next_radius * 0.6) {
       intent = "toZone"
       gx = zp.tx
       gy = zp.ty
+    } else if (P.idleStay && !ffa && (!this.w.loaded || z - this.w.ground(x, y) < 3)) {
+      // (never on a roof: from a roof pocket the way back to the zone can be long or need a jet)
+      // squad: standing still is silent and keeps us out of the non-hunters' view
+      intent = "stay"
+      moving = false
     } else {
       intent = "wander"
       if (!this.wander || t > this.wander.until || Math.hypot(this.wander.x - x, this.wander.y - y) < 4) this.wander = this.pickWander(obs, x, y)
@@ -346,6 +373,7 @@ export class Brain {
 
     const mv = this.motion.steer(t, x, y, z, gx, gy, me.energy, !this.guard.over(), moving)
     let move = mv.move
+    if (intent === "stay") move = [0, 0] // the motion layer may snap our own cell to a neighbour; stand still
     boost = (boost && !mv.conserve) || mv.jet
     if (opening && intent !== "zone" && !mv.jet) boost = false
     // dodge overlays movement
@@ -542,6 +570,34 @@ export class Brain {
     }
     zp.tx = this.zoneCache.x
     zp.ty = this.zoneCache.y
+  }
+
+  private rimGoal: { key: string; x: number; y: number } | null = null
+  private zonePath: { t: number; x: number; y: number; tx: number; ty: number; len: number } | null = null
+  /** Walking distance to (tx, ty) along the grid, refreshed every 1.5 s or when we or the goal move 6 m. */
+  private zonePathLen(x: number, y: number, z: number, tx: number, ty: number, t: number, straight: number): number {
+    if (!this.w.loaded) return straight
+    const c = this.zonePath
+    const fresh = c && t - c.t < 1.5 && Math.hypot(c.tx - tx, c.ty - ty) < 6 && Math.hypot(c.x - x, c.y - y) < 6
+    if (c && (fresh || this.guard.over())) return Math.max(straight, c.len - Math.hypot(c.x - x, c.y - y))
+    if (this.guard.over()) return straight * 1.3
+    const g = this.w.grid
+    const s = g.nearestPass(g.idx(x, y), -1, 3, z)
+    let len = straight
+    if (s >= 0) {
+      const goal = g.nearestPass(g.idx(tx, ty), g.comp[s])
+      if (goal < 0) len = straight * 1.5
+      else {
+        const p = this.w.nav.find(s, goal, PARAMS.common.rimPathCap)
+        let L = Math.hypot(g.cx(p[0]) - x, g.cy(p[0]) - y)
+        for (let k = 1; k < p.length; k++) L += Math.hypot(g.cx(p[k]) - g.cx(p[k - 1]), g.cy(p[k]) - g.cy(p[k - 1]))
+        const last = p[p.length - 1]
+        L += Math.hypot(tx - g.cx(last), ty - g.cy(last))
+        len = Math.max(straight, L)
+      }
+    }
+    this.zonePath = { t, x, y, tx, ty, len }
+    return len
   }
 
   /** Tracks seen in the last 20 s (positions may be stale): used only for where not to stand. */

@@ -15,6 +15,15 @@ export const PARAMS = {
     zoneInsideFrac: 0.3,
     zoneSafety: 1.4,
     zoneSlackS: 6,
+    // rim hold: stay put inside the next circle (by min(30, 0.3 R) + 5 m); leave when the moving edge would reach us
+    rimHold: true,
+    rimTravelMult: 1.4,
+    rimSlackS: 6,
+    rimSoftS: 1000, // no target: walk in as soon as we are outside the hold ring
+    rimLeaveByEnd: true,
+    rimOutsideOld: true, // outside the current circle: head for the old 0.7 R point (open ground, fewer detours)
+    rimPathCap: 6000,
+    idleStay: true, // squad mode: stand still when there is nothing to do instead of wandering
     zoneDiscardLead: 15,
     dodgeHorizon: 0.6,
     dodgeMargin: 1.2,
