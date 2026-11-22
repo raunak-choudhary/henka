@@ -131,13 +131,17 @@ test("edge deadline: inside both circles never; outside the next circle when the
   assert.ok(d > 80 && d < 85, String(d))
 })
 
-test("brain: squad idle with nothing to do stands still instead of wandering", () => {
+test("brain (idleStay on): squad idle with nothing to do stands still instead of wandering", () => {
+  const keep = [PARAMS.common.idleStay, PARAMS.squad.stalk]
+  PARAMS.common.idleStay = true
+  PARAMS.squad.stalk = false
   const hello = kitStream()[0]
   hello.map.dir = ARENA
   const b = new Brain(hello)
   const o: any = { type: "obs", tick: 600, t: 30, alive: 16, self: { id: 0, pos: [-60, -20, -3.8], vel: [0, 0, 0], aim: [0, 0], hp: 1400, max_hp: 1400, energy: 100, max_energy: 100, grounded: true, cubes: 0, upgrades: [], weapons: [{ kind: "gun", ammo: 12, reload: 0, cooldown: 0 }, { kind: "laser", charge: 0, cooldown: 0 }], in_zone: true, stats: {} }, mechs: [], projectiles: [], crates: [], cubes: [], pickups: [], sounds: [], beams: [], events: [], drops: [], offer: null, zone: { center: [41.3, -72.8], radius: 560, next_center: [41.3, -72.8], next_radius: 380, shrink_start: 60, shrink_end: 110, dps: 20 } }
   o.self.pos[2] = b.w.ground(-60, -20)
   const a = b.act(o)
+  ;[PARAMS.common.idleStay, PARAMS.squad.stalk] = keep
   assert.equal(b.intent, "stay")
   assert.deepEqual(a.move, [0, 0])
 })

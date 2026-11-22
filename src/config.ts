@@ -16,14 +16,14 @@ export const PARAMS = {
     zoneSafety: 1.4,
     zoneSlackS: 6,
     // rim hold: stay put inside the next circle (by min(30, 0.3 R) + 5 m); leave when the moving edge would reach us
-    rimHold: true,
+    rimHold: false, // 160c260 (on) scored 4.19 vs 4.58: passivity costs kills
     rimTravelMult: 1.4,
     rimSlackS: 6,
     rimSoftS: 1000, // no target: walk in as soon as we are outside the hold ring
     rimLeaveByEnd: true,
     rimOutsideOld: true, // outside the current circle: head for the old 0.7 R point (open ground, fewer detours)
     rimPathCap: 6000,
-    idleStay: true, // squad mode: stand still when there is nothing to do instead of wandering
+    idleStay: false, // squad mode: stand still when there is nothing to do instead of wandering
     zoneDiscardLead: 15,
     dodgeHorizon: 0.6,
     dodgeMargin: 1.2,
@@ -62,6 +62,20 @@ export const PARAMS = {
     engageHpFrac: 0.5,
     engageClosingSpeed: 2,
     engageAllAfter: 200,
+    // stalk: idle and healthy, walk toward the nearest known house bot until it is at laser range, then the
+    // selective engage rule (engageClose) takes over. Goal is a cell at stalkRange from it with sight of it
+    // and as hidden as possible from everyone else.
+    stalk: true,
+    stalkRange: 115,
+    stalkHp: 0.7,
+    stalkMaxEngaged: 1, // at most this many mechs hit us in the last 6 s
+    stalkUntilRadius: 140, // off once the next circle is this small (the end game comes to us)
+    stalkMemoryS: 10, // only tracks seen this recently
+    stalkReplanS: 2,
+    stalkSound: true, // nobody known: walk toward the latest mid/far gun or laser sound
+    stalkSoundMid: 50,
+    stalkSoundFar: 90,
+    stalkSoundS: 4,
   },
   ffa: {
     quietUntil: 60,

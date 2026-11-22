@@ -111,6 +111,7 @@ export class Brain {
     this.zoneCache = null
     this.zonePath = null
     this.rimGoal = null
+    this.stalkCache = null
     this.zoneHold = false
     draw.clear()
   }
@@ -273,6 +274,7 @@ export class Brain {
     const drop = (ffa || P.dropsInSquad) && !zp.mustGo ? this.chooseDrop(obs, x, y, walk, hpFrac) : null
 
     let cover: { x: number; y: number } | null = null
+    let stalk: { x: number; y: number } | null = null
     if (zp.mustGo) {
       intent = "zone"
       gx = zp.tx
@@ -354,6 +356,10 @@ export class Brain {
       intent = "regen"
       gx = cover.x
       gy = cover.y
+    } else if (S.stalk && (stalk = this.stalkGoal(obs, t, x, y, z, eye, hpFrac, safeGoal))) {
+      intent = "stalk"
+      gx = stalk.x
+      gy = stalk.y
     } else if (P.rimHold ? zp.should : !zp.insideNext || zp.distNext > obs.zone.next_radius * 0.6) {
       intent = "toZone"
       gx = zp.tx
@@ -598,6 +604,82 @@ export class Brain {
     }
     this.zonePath = { t, x, y, tx, ty, len }
     return len
+  }
+
+  private stalkCache: { id: number; x: number; y: number; until: number } | null = null
+
+  /**
+   * Squad idle: where to walk to meet the nearest known mech at laser range, or null when we should not
+   * (hurt, under fire from several, end game, opening, nothing known, or no safe cell).
+   */
+  stalkGoal(obs: Observation, t: number, x: number, y: number, z: number, eye: number, hpFrac: number, safe: (px: number, py: number) => boolean): { x: number; y: number } | null {
+    const S = PARAMS.squad
+    if (this.mode.mode === "ffa" || t < PARAMS.common.quietUntil || hpFrac < S.stalkHp || obs.zone.next_radius <= S.stalkUntilRadius) return null
+    let hitters = 0
+    for (const tr of this.tk.mechs.values()) if (t - tr.lastHitUsT < 6) hitters++
+    if (hitters > S.stalkMaxEngaged) return null
+    const zn = obs.zone
+    let prey: Track | null = null
+    let bd = Infinity
+    for (const tr of this.tk.mechs.values()) {
+      if (t - tr.lastSeenT > S.stalkMemoryS || tr.hp <= 0) continue
+      if (Math.hypot(tr.x - zn.next_center[0], tr.y - zn.next_center[1]) > zn.next_radius) continue // do not follow it out
+      const d = Math.hypot(tr.x - x, tr.y - y)
+      if (d < bd) (bd = d), (prey = tr)
+    }
+    if (!prey) {
+      // nobody known: walk toward the latest gunfire we heard (a fight somewhere, often a weakened mech)
+      const c = this.stalkCache
+      if (c && c.id === -1 && t < c.until && Math.hypot(c.x - x, c.y - y) > 4) return c
+      this.stalkCache = null
+      if (!S.stalkSound) return null
+      let snd: { bearing: number; dist: string; age: number } | null = null
+      for (const sd of obs.sounds ?? []) if ((sd.kind === "gun" || sd.kind === "laser") && sd.dist !== "near" && (!snd || sd.age < snd.age)) snd = sd
+      if (!snd) return null
+      const step = snd.dist === "mid" ? S.stalkSoundMid : S.stalkSoundFar
+      for (const f of [1, 0.6, 0.3]) {
+        const qx = x + Math.cos(snd.bearing) * step * f, qy = y + Math.sin(snd.bearing) * step * f
+        if (!safe(qx, qy)) continue
+        if (this.w.loaded) {
+          const g = this.w.grid
+          const K = g.idx(qx, qy)
+          const here = g.nearestPass(g.idx(x, y), -1, 3, z)
+          if (!g.pass[K] || (here >= 0 && g.comp[K] !== g.comp[here])) continue
+        }
+        this.stalkCache = { id: -1, x: qx, y: qy, until: t + S.stalkSoundS }
+        return this.stalkCache
+      }
+      return null
+    }
+    if (bd <= S.stalkRange) return null // in range: the engage rule takes it from here
+    const c = this.stalkCache
+    if (c && c.id === prey.id && t < c.until && Math.hypot(c.x - x, c.y - y) > 4) return c
+    if (this.guard.over()) return c && c.id === prey.id ? c : null
+    // candidates on an arc at stalkRange around the prey, centred on our side
+    const g = this.w.grid
+    const here = this.w.loaded ? g.nearestPass(g.idx(x, y), -1, 3, z) : -1
+    const comp = here >= 0 ? g.comp[here] : -1
+    const others = this.recentTracks(t).filter((o) => o.id !== prey!.id)
+    const base = Math.atan2(y - prey.y, x - prey.x)
+    let best: { x: number; y: number } | null = null
+    let bs = -Infinity
+    for (let k = -4; k <= 4; k++) {
+      const a = base + k * 0.15
+      const qx = prey.x + Math.cos(a) * S.stalkRange, qy = prey.y + Math.sin(a) * S.stalkRange
+      if (!safe(qx, qy)) continue
+      let qz = z
+      if (this.w.loaded) {
+        const K = g.idx(qx, qy)
+        if (!g.pass[K] || (comp >= 0 && g.comp[K] !== comp)) continue
+        qz = g.height[K]
+      }
+      let s = -Math.hypot(qx - x, qy - y) * 0.3 // walking time
+      if (this.w.los(qx, qy, qz + eye, prey.x, prey.y, prey.z + 4.5)) s += 40
+      for (const o of others) if (Math.hypot(o.x - qx, o.y - qy) < 220 && this.w.los(o.x, o.y, o.z + 8, qx, qy, qz + 4.5)) s -= 30
+      if (s > bs) (bs = s), (best = { x: qx, y: qy })
+    }
+    this.stalkCache = best ? { id: prey.id, x: best.x, y: best.y, until: t + S.stalkReplanS } : null
+    return best
   }
 
   /** Tracks seen in the last 20 s (positions may be stale): used only for where not to stand. */
