@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "scripts": {
     "typecheck": "tsc --noEmit -p .",
     "test": "node --experimental-strip-types --no-warnings --test test/*.test.ts",
