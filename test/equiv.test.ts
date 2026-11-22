@@ -21,11 +21,14 @@ function kitHash(): { n: number; hex: string } {
   return { n, hex: h.digest("hex") }
 }
 
-test("flags off (rimHold, idleStay, stalk): actions identical to 7a3fce0 on the kit stream", () => {
-  const keep = { r: PARAMS.common.rimHold, i: PARAMS.common.idleStay, s: PARAMS.squad.stalk }
+test("flags off (rimHold, idleStay, stalk, every core piece): actions identical to 7a3fce0 on the kit stream", () => {
+  const C = PARAMS.core as Record<string, unknown>
+  const coreFlags = Object.keys(C).filter((k) => typeof C[k] === "boolean")
+  const keep = { r: PARAMS.common.rimHold, i: PARAMS.common.idleStay, s: PARAMS.squad.stalk, c: coreFlags.map((k) => C[k]) }
   PARAMS.common.rimHold = false
   PARAMS.common.idleStay = false
   PARAMS.squad.stalk = false
+  for (const k of coreFlags) C[k] = false
   try {
     const { n, hex } = kitHash()
     assert.equal(n, 300)
@@ -34,5 +37,6 @@ test("flags off (rimHold, idleStay, stalk): actions identical to 7a3fce0 on the 
     PARAMS.common.rimHold = keep.r
     PARAMS.common.idleStay = keep.i
     PARAMS.squad.stalk = keep.s
+    coreFlags.forEach((k, j) => (C[k] = keep.c[j]))
   }
 })

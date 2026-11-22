@@ -77,6 +77,60 @@ export const PARAMS = {
     stalkSoundFar: 90,
     stalkSoundS: 4,
   },
+  // debate-A squad core: one flag per piece so the board can leave each one out
+  core: {
+    // (a) farming: crates and drones when idle and healthy; wider cube detours
+    farmCrates: true,
+    farmDrones: true,
+    farmDetours: true,
+    farmHp: 0.5, // farm only above this HP fraction
+    farmQuietS: 4, // and nobody hit us this recently
+    farmRange: 150,
+    farmCrateValue: 44,
+    farmDroneValue: 52, // drones drop 2 cubes but shoot back
+    farmDistPad: 20, // score = value / (dist + pad)
+    farmKeepBonus: 1.3,
+    farmShootRange: 48, // stop and shoot a crate from here with sight of it
+    farmDroneRange: 55, // fight a drone from here
+    farmGiveUpS: 25,
+    farmBanS: 50,
+    farmCrateMemoryS: 60,
+    farmRoofM: 3, // skip crates this far above the ground (their cube lands on the roof)
+    detourIdle: 100,
+    detourFight: 40,
+    detourFightHurt: 25, // HP at or under half
+    // (b) upgrade order: plating, armor first (UPGRADES_SQUAD_CORE)
+    upgradeOrder: true,
+    // (c) target only mechs we can see this tick (current target keeps a short grace)
+    losTargets: true,
+    losGraceS: 0.5,
+    // (d) aim at the head when the centre ray is blocked
+    headAim: true,
+    headFrac: 0.85,
+    // (e) boost only to sidestep a charging laser aimed at us; bullets get a walking sidestep
+    laserOnlyBoost: true,
+    laserAimTol: 0.14,
+    laserDodgeEnergy: 20,
+    bulletMoveW: 0.45,
+    bulletDodgeW: 0.85,
+    // (f) lose-rule retreat: re-armed every tick, 1.5 s hysteresis, keeps shooting
+    loseRetreat: true,
+    loseNearRange: 160,
+    lose2Hp: 0.55, // >= 2 mechs near and HP under this
+    lose3Hp: 0.8, // >= 3 mechs near and HP under this
+    loseAloneHp: 0.35, // HP under this and the target is ahead of us by loseAloneGap
+    loseAloneGap: 0.1,
+    loseCancelTarget: 0.25,
+    loseCancelSelf: 0.2,
+    loseHoldS: 1.5,
+    loseFinishRange: 120,
+    loseFinishHp: 200,
+    loseLateRadius: 70,
+    loseLateAlive: 3,
+    loseCoverM: 48,
+    loseThreats: 4,
+    loseBoostEnergy: 10,
+  },
   ffa: {
     quietUntil: 60,
     keepAway: 150,
@@ -92,6 +146,7 @@ export const PARAMS = {
 export type Params = typeof PARAMS
 
 export const UPGRADES_SQUAD = ["plating", "laser_damage", "gun_rate", "gun_damage", "armor", "laser_charge", "nanites", "servos", "gyros"]
+export const UPGRADES_SQUAD_CORE = ["plating", "armor", "laser_damage", "laser_charge", "gun_rate", "nanites", "gun_damage", "servos", "gyros"]
 export const UPGRADES_FFA = ["plating", "nanites", "armor", "laser_damage", "servos", "gun_rate", "gun_damage", "gyros"]
 // Never useful to us: anything for the mortar.
 export const UPGRADES_AVOID = ["mortar_splash", "mortar_reload", "mortar_velocity"]

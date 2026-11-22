@@ -20,6 +20,8 @@ import { clamp, finite, wrap } from "./vec.ts"
 
 type Act = Omit<Action, "tick">
 
+export type FarmGoal = { kind: "crate" | "drone"; id: number; x: number; y: number; aimZ: number; vx: number; vy: number }
+
 export class Brain {
   cfg: Hello["config"]
   w: World
@@ -112,6 +114,12 @@ export class Brain {
     this.zonePath = null
     this.rimGoal = null
     this.stalkCache = null
+    this.crateMem.clear()
+    this.droneMem.clear()
+    this.farmCur = null
+    this.farmBan.clear()
+    this.sightT.clear()
+    this.loseAt = -1e9
     this.zoneHold = false
     draw.clear()
   }
@@ -188,7 +196,17 @@ export class Brain {
     const opening = t < P.quietUntil
 
     // ---- target
+    const C = PARAMS.core
+    const visible = (tr: Track) => {
+      const sz = 1 + 0.05 * tr.cubes
+      if (this.w.los(x, y, z + eye, tr.x, tr.y, tr.z + 4.5 * sz) || this.w.los(x, y, z + eye, tr.x, tr.y, tr.z + 8.5 * sz)) {
+        this.sightT.set(tr.id, t)
+        return true
+      }
+      return tr.id === this.targetId && t - (this.sightT.get(tr.id) ?? -1e9) <= C.losGraceS
+    }
     const engage = (tr: Track, d: number) => {
+      if (C.losTargets && !ffa && !visible(tr)) return false
       const hitUs = t - tr.lastHitUsT < 6
       if (opening) return hitUs || d <= P.openingShootRange
       if (!ffa) return this.squadEngage(tr, d, t, hitUs, x, y)
@@ -198,8 +216,11 @@ export class Brain {
     this.targetId = target ? target.id : -1
     const tDist = target ? Math.hypot(target.x - x, target.y - y) : Infinity
     const tSize = target ? 1 + 0.05 * target.cubes : 1
-    const tCz = target ? target.z + 4.5 * tSize : 0
-    const seeTarget = target ? this.w.los(x, y, z + eye, target.x, target.y, tCz) || this.w.los(x, y, z + eye, target.x, target.y, target.z + 8.5 * tSize) : false
+    let tCz = target ? target.z + 4.5 * tSize : 0
+    const seeCentre = target ? this.w.los(x, y, z + eye, target.x, target.y, tCz) : false
+    const seeTarget = target ? seeCentre || this.w.los(x, y, z + eye, target.x, target.y, target.z + 8.5 * tSize) : false
+    // centre hidden behind low cover but the head is in sight: shoot the head, not the wall
+    if (C.headAim && target && !seeCentre && seeTarget) tCz = target.z + 9 * tSize * C.headFrac
     // NPC fallback: shoot a drone only if it is shooting us
     let npc: { x: number; y: number; z: number; vx: number; vy: number } | null = null
     if (!target) {
@@ -210,6 +231,8 @@ export class Brain {
         if (d < bd) (bd = d), (npc = { x: n.pos[0], y: n.pos[1], z: n.pos[2] - 2.75, vx: n.vel[0], vy: n.vel[1] })
       }
     }
+
+    if (C.farmCrates || C.farmDrones) this.farmMemory(obs, t, x, y, z, eye)
 
     // ---- strafe direction flips at random intervals
     if (t >= this.strafeFlipT) {
@@ -229,7 +252,7 @@ export class Brain {
     const cubeCap = P.cubeCap
     let nearCube: { x: number; y: number } | null = null
     {
-      const lim = target ? P.cubeDetourFight : P.cubeDetourIdle
+      const lim = C.farmDetours ? (target ? (hpFrac <= 0.5 ? C.detourFightHurt : C.detourFight) : C.detourIdle) : target ? P.cubeDetourFight : P.cubeDetourIdle
       let bd = lim
       for (const c of cubesSeen) {
         if (Math.abs(c.z - z) > 4) continue
@@ -262,6 +285,25 @@ export class Brain {
       }
     }
     if (target && target.hp / Math.max(1, target.maxHp) < S.retreatCancelTarget) this.retreatUntil = -1
+    // lose rule (core f): re-evaluated every tick; we keep shooting while we back off
+    let losing = false
+    let threats: Track[] = []
+    if (C.loseRetreat && !ffa && !berserk) {
+      const near = live.filter((tr) => Math.hypot(tr.x - x, tr.y - y) < C.loseNearRange)
+      const tFrac = target ? target.hp / Math.max(1, target.maxHp) : 1
+      let lose = (near.length >= 2 && hpFrac < C.lose2Hp) || (near.length >= 3 && hpFrac < C.lose3Hp) || (!!target && hpFrac < C.loseAloneHp && tFrac > hpFrac + C.loseAloneGap)
+      if (target && tFrac < C.loseCancelTarget && hpFrac > C.loseCancelSelf && near.length <= 2) lose = false
+      const finishing = !!target && tDist <= C.loseFinishRange && (target.hp < C.loseFinishHp || target.hp < 0.5 * me.hp)
+      const late = obs.zone.next_radius <= C.loseLateRadius || obs.alive <= C.loseLateAlive
+      if (finishing || late) {
+        lose = false
+        this.loseAt = -1e9
+      }
+      if (lose) this.loseAt = t
+      losing = t - this.loseAt < C.loseHoldS
+      if (losing) threats = near.sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y)).slice(0, C.loseThreats)
+      if (losing && !threats.length) threats = live.slice(0, C.loseThreats)
+    }
 
     // free-for-all: break off to heal when hurt and cover is near; no new fights until healed
     const F = PARAMS.ffa
@@ -275,6 +317,8 @@ export class Brain {
 
     let cover: { x: number; y: number } | null = null
     let stalk: { x: number; y: number } | null = null
+    let farm: FarmGoal | null = null
+    let farmShot = false
     if (zp.mustGo) {
       intent = "zone"
       gx = zp.tx
@@ -285,7 +329,12 @@ export class Brain {
       gx = cover.x
       gy = cover.y
       boost = me.energy > 20
-    } else if (t < this.retreatUntil && !this.guard.over() && (cover = findCover(this.w, x, y, z, live, 24))) {
+    } else if (losing && threats.length && !this.guard.over() && (cover = findCover(this.w, x, y, z, threats, C.loseCoverM))) {
+      intent = "retreat"
+      gx = cover.x
+      gy = cover.y
+      boost = me.energy > C.loseBoostEnergy
+    } else if (!C.loseRetreat && t < this.retreatUntil && !this.guard.over() && (cover = findCover(this.w, x, y, z, live, 24))) {
       intent = "retreat"
       gx = cover.x
       gy = cover.y
@@ -356,6 +405,24 @@ export class Brain {
       intent = "regen"
       gx = cover.x
       gy = cover.y
+    } else if ((C.farmCrates || C.farmDrones) && (farm = this.farmGoal(obs, t, x, y, z, eye, hpFrac, zp.mustGo, safeGoal))) {
+      intent = farm.kind === "crate" ? "farmCrate" : "farmDrone"
+      const d = Math.hypot(farm.x - x, farm.y - y)
+      const sight = this.w.los(x, y, z + eye, farm.x, farm.y, farm.aimZ)
+      if (farm.kind === "crate") {
+        if (d <= C.farmShootRange && sight) moving = false
+        else (gx = farm.x), (gy = farm.y)
+      } else if (d > C.farmDroneRange || !sight) (gx = farm.x), (gy = farm.y)
+      else {
+        // in range with sight: sidestep around it while the gun works
+        const b = Math.atan2(farm.y - y, farm.x - x)
+        gx = x - Math.sin(b) * this.strafe * 6
+        gy = y + Math.cos(b) * this.strafe * 6
+      }
+      if (!npc && d <= (farm.kind === "crate" ? C.farmShootRange : C.farmDroneRange + 15)) {
+        npc = { x: farm.x, y: farm.y, z: farm.aimZ - 1.75, vx: farm.vx, vy: farm.vy }
+        farmShot = true
+      }
     } else if (S.stalk && (stalk = this.stalkGoal(obs, t, x, y, z, eye, hpFrac, safeGoal))) {
       intent = "stalk"
       gx = stalk.x
@@ -384,7 +451,29 @@ export class Brain {
     if (opening && intent !== "zone" && !mv.jet) boost = false
     // dodge overlays movement
     const dz = dodgeVector(x, y, z, myH, myR, obs.projectiles, P.dodgeHorizon, P.dodgeMargin)
-    if (dz && intent !== "zone") {
+    if (C.laserOnlyBoost) {
+      // a laser charging and aimed at us, with sight: sidestep across its line with boost
+      let lz: Track | null = null
+      for (const tr of live) {
+        if (!tr.charging) continue
+        const toUs = Math.atan2(y - tr.y, x - tr.x)
+        if (Math.abs(wrap(tr.aimYaw - toUs)) > C.laserAimTol || Math.hypot(tr.x - x, tr.y - y) > 290) continue
+        if (this.w.los(tr.x, tr.y, tr.z + 8, x, y, z + 4.5)) (lz = tr)
+        if (lz) break
+      }
+      if (lz && intent !== "zone" && me.energy > C.laserDodgeEnergy) {
+        const b = Math.atan2(y - lz.y, x - lz.x)
+        move = [-Math.sin(b) * this.strafe, Math.cos(b) * this.strafe]
+        boost = true
+        this.intent = intent + "+laserDodge"
+      } else if (dz && intent !== "zone") {
+        // bullets: walk sideways, no boost
+        const mx2 = dz.dx * C.bulletDodgeW + move[0] * C.bulletMoveW, my2 = dz.dy * C.bulletDodgeW + move[1] * C.bulletMoveW
+        const l = Math.hypot(mx2, my2)
+        move = l > 1 ? [mx2 / l, my2 / l] : [mx2, my2]
+        this.intent = intent + "+dodge"
+      }
+    } else if (dz && intent !== "zone") {
       move = [dz.dx * 0.85 + move[0] * 0.15, dz.dy * 0.85 + move[1] * 0.15]
       if (me.energy > 15) boost = true
       this.intent = intent + "+dodge"
@@ -410,7 +499,7 @@ export class Brain {
       const ls = solveAim(mx, my, mz, tx, ty, tz, tvx, tvy, 0, Infinity, 0.1)
       // laser state
       let laserAim = false
-      if (laser) {
+      if (laser && !farmShot) {
         const full = laser.stats?.charge ?? 0.75
         const ch = laser.charge ?? 0
         if (ch > 0 && this.laserStartT < 0) this.laserStartT = t - ch
@@ -606,6 +695,78 @@ export class Brain {
     return len
   }
 
+  private crateMem = new Map<number, { x: number; y: number; z: number; seenT: number }>()
+  private droneMem = new Map<number, { x: number; y: number; z: number; vx: number; vy: number; seenT: number }>()
+  private farmCur: { id: number; since: number } | null = null
+  private farmBan = new Map<number, number>()
+  private sightT = new Map<number, number>()
+
+  /** Keep crates and drones we have seen; forget ones that are gone where we can see their spot. */
+  private farmMemory(obs: Observation, t: number, x: number, y: number, z: number, eye: number) {
+    const C = PARAMS.core
+    const listedC = new Set<number>()
+    for (const c of obs.crates ?? []) {
+      listedC.add(c.id)
+      this.crateMem.set(c.id, { x: c.pos[0], y: c.pos[1], z: c.pos[2], seenT: t })
+    }
+    for (const [id, c] of this.crateMem) {
+      if (listedC.has(id)) continue
+      if (t - c.seenT > C.farmCrateMemoryS || (Math.hypot(c.x - x, c.y - y) < 60 && this.w.los(x, y, z + eye, c.x, c.y, c.z + 1))) this.crateMem.delete(id)
+    }
+    const listedD = new Set<number>()
+    for (const m of obs.mechs ?? []) {
+      if (m.kind !== "npc") continue
+      listedD.add(m.id)
+      this.droneMem.set(m.id, { x: m.pos[0], y: m.pos[1], z: m.pos[2], vx: m.vel[0], vy: m.vel[1], seenT: t })
+    }
+    for (const [id, d] of this.droneMem) {
+      if (listedD.has(id)) continue
+      if (t - d.seenT > 12 || (Math.hypot(d.x - x, d.y - y) < 60 && this.w.los(x, y, z + eye, d.x, d.y, d.z))) this.droneMem.delete(id)
+    }
+  }
+
+  /** Idle economy: the best crate or drone to farm now, or null. */
+  farmGoal(obs: Observation, t: number, x: number, y: number, z: number, eye: number, hpFrac: number, mustGo: boolean, safe: (px: number, py: number) => boolean): FarmGoal | null {
+    const C = PARAMS.core
+    if (mustGo || t < PARAMS.common.quietUntil || hpFrac <= C.farmHp || this.mode.mode === "ffa") return (this.farmCur = null)
+    for (const tr of this.tk.mechs.values()) if (t - tr.lastHitUsT < C.farmQuietS) return (this.farmCur = null)
+    const cubes = obs.self.cubes ?? 0
+    const g = this.w.grid
+    const here = this.w.loaded ? g.nearestPass(g.idx(x, y), -1, 3, z) : -1
+    const comp = here >= 0 ? g.comp[here] : -1
+    const reachable = (px: number, py: number) => {
+      if (!this.w.loaded) return true
+      const K = g.nearestPass(g.idx(px, py), -1, 4)
+      return K >= 0 && (comp < 0 || g.comp[K] === comp)
+    }
+    let best: FarmGoal | null = null
+    let bs = 0
+    const consider = (goal: FarmGoal, value: number) => {
+      const d = Math.hypot(goal.x - x, goal.y - y)
+      if (d > C.farmRange || (this.farmBan.get(goal.id) ?? -1) > t || !safe(goal.x, goal.y)) return
+      let sc = value / (d + C.farmDistPad)
+      if (this.farmCur && this.farmCur.id === goal.id) sc *= C.farmKeepBonus
+      if (sc > bs && reachable(goal.x, goal.y)) (bs = sc), (best = goal)
+    }
+    if (C.farmCrates)
+      for (const [id, c] of this.crateMem) {
+        if (this.w.loaded && c.z - this.w.ground(c.x, c.y) > C.farmRoofM) continue
+        consider({ kind: "crate", id, x: c.x, y: c.y, aimZ: c.z + 1, vx: 0, vy: 0 }, C.farmCrateValue)
+      }
+    if (C.farmDrones && cubes < PARAMS.common.cubeCap)
+      for (const [id, d] of this.droneMem) consider({ kind: "drone", id, x: d.x, y: d.y, aimZ: d.z - 1, vx: d.vx, vy: d.vy }, C.farmDroneValue)
+    const b = best as FarmGoal | null
+    if (!b) return (this.farmCur = null)
+    if (!this.farmCur || this.farmCur.id !== b.id) this.farmCur = { id: b.id, since: t }
+    else if (t - this.farmCur.since > C.farmGiveUpS) {
+      this.farmBan.set(b.id, t + C.farmBanS)
+      this.farmCur = null
+      return null
+    }
+    return b
+  }
+
+  loseAt = -1e9
   private stalkCache: { id: number; x: number; y: number; until: number } | null = null
 
   /**
