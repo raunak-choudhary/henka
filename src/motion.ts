@@ -25,7 +25,6 @@ export class Motion {
   snapKey = -1
   snapTo = -1
   snapComp = -1
-  edgeUntil = -1
 
   constructor(w: World, rng: Rng) {
     this.w = w
@@ -77,10 +76,7 @@ export class Motion {
     }
     let dGoal = Math.hypot(gx - x, gy - y)
     const dReal = Math.hypot(realX - x, realY - y)
-    // hysteresis: standing on a wall cell, the cell we snap to can flip between two pockets every
-    // tick and pull us back and forth across 1 m forever; once at the edge, keep heading straight on
-    if (dGoal < 3 && dReal > 5) this.edgeUntil = t + 1.5
-    if (t < this.edgeUntil && dReal > 5) {
+    if (dGoal < 3 && dReal > 5) {
       // At the edge of our pocket: keep going straight (drop off a roof edge; stuck recovery jets over walls).
       gx = realX
       gy = realY
