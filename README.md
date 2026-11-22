@@ -18,77 +18,113 @@ I built Henka for the Builders Buildathon 2026 under the team name **Neural Forg
 ## Contents
 
 1. [Status](#status)
-2. [The game](#the-game)
-3. [How it works](#how-it-works)
-4. [What the scoreboard taught me](#what-the-scoreboard-taught-me)
-5. [Project layout](#project-layout)
-6. [Running it](#running-it)
-7. [Testing and tools](#testing-and-tools)
-8. [Third-party files](#third-party-files)
-9. [License](#license)
-10. [Built by](#built-by)
+2. [The challenge](#the-challenge)
+3. [My approach](#my-approach)
+4. [How the bot works](#how-the-bot-works)
+5. [What worked](#what-worked)
+6. [What failed](#what-failed)
+7. [What I learned](#what-i-learned)
+8. [Project layout](#project-layout)
+9. [Running it](#running-it)
+10. [Testing and tools](#testing-and-tools)
+11. [Third-party files](#third-party-files)
+12. [License](#license)
+13. [Built by](#built-by)
 
 ## Status
 
-Final, November 2026. The event is over and the code is kept here as it was written during the weekend.
+Final, November 2026. The event is over. `main` is the build that earned my best score with this bot, 4.98, and the experiments that scored lower are kept in the code as switches that are off by default.
 
 | | |
 |---|---|
 | Event | Builders Buildathon 2026, Mech Royale track |
 | Team | Neural Forge |
 | Field | 418 teams |
-| Best practice-board score | 4.98 placement points per match |
+| Best score with this bot | 4.98 placement points per match on the practice board |
+| Outcome | Did not reach the 32-team final |
 | Code | About 2,900 lines of TypeScript, 65 unit tests |
 
-## The game
+## The challenge
 
-A match scores `16 − place`, so every mech that dies before you is a point, and the board reports the mean over many matches. Practice matches put one entry against 15 house bots that share vision, hunt the weakest mech first, and never fight each other. The final rounds are a free-for-all between team bots.
+Mech Royale is a 16-mech battle royale on a 3D map with buildings, roofs and a shrinking safe zone. Each team submits a container. The organisers run it in a sandbox with one CPU, 512 MB of memory and no network, and talk to it over the `mechfight/1` JSON-lines protocol:
 
-Three constraints shaped the design:
+1. A `hello` message with the map and the match settings.
+2. An observation every tick: the bot's own state, the mechs it can see, shots, beams, sounds, pickups and the zone.
+3. One action back per tick: move, aim, fire, jump, boost, pick up, choose an upgrade.
 
-- **A hard deadline.** A late answer is a lost tick, so every decision has to fit in 50 ms on one CPU.
-- **Partial information.** A mech only sees what is in line of sight, plus sounds and beams.
-- **A closing zone.** Standing in the wrong place costs more health than most fights.
+The task comes with four hard parts:
 
-## How it works
+- **A deadline.** Each answer is due within 50 ms. A late answer is a lost tick.
+- **Partial information.** A mech only sees what is in its line of sight.
+- **A closing zone.** The safe circle shrinks, and standing outside it drains health faster than most fights.
+- **A placement score.** A match scores `16 − place`, so every mech that dies before you is a point. The board shows the mean over many matches.
 
-Each tick runs the same pipeline:
+Practice matches put one entry against 15 house bots. They share vision, hunt the weakest mech first, and never fight each other. The top 32 teams on the practice board go on to a free-for-all between team bots.
+
+## My approach
+
+I wrote the bot from scratch in TypeScript, with no runtime dependencies, around four ideas:
+
+- **Build the world once.** Turn the height field into a walk grid at start-up, so path planning and line-of-sight checks are cheap enough to run many times per tick.
+- **One movement decision per tick.** A fixed priority list picks a single movement intent. Aiming and firing are decided separately, so the bot keeps shooting while it moves.
+- **Every behaviour behind a flag.** All thresholds live in [`src/config.ts`](src/config.ts). An experiment is a one-line change and can be switched off again without touching the logic.
+- **Let the scoreboard decide.** Change one thing, submit it, read the score, keep it or revert it.
+
+## How the bot works
 
 ```
 observation ─► normalise ─► tracker ─► mode ─► movement intent ─► motion (A*) ─► action
                                           └──► aim and fire (decided separately) ──┘
 ```
 
-- **Movement is one intent per tick, first match wins.** The order is fixed: leave the zone, break line of sight, retreat, loot, evade, heal, fight, collect cubes, farm crates and drones, stalk, walk to the zone, stay. Aim and fire are decided on their own, so the bot keeps shooting while it loots, dodges or walks.
-- **The world is built once.** The 1 m height field becomes a 2 m walk grid with wall cells, clearance distances and connected components. Paths come from a capped A* (8-connected, octile heuristic, extra cost for hugging walls), with periodic re-planning and stuck recovery in the motion layer.
-- **Line of sight is computed, not guessed.** A ray is blocked when the surface rises above it anywhere along the segment. Targeting, cover search and head aim (used when the centre ray is blocked) all go through the same check.
-- **A tracker remembers what the observation forgets.** It keeps every mech's last position, velocity, health, weapons and charge state, the shots coming in, and who damaged whom.
-- **Fights are selective.** The bot engages mechs that are close, weak, closing, aiming at it or hitting it, and leaves the rest alone so its health can regenerate. When it is idle and healthy it stalks: it walks to laser range of the nearest known enemy, to a cell with sight of the target and as little exposure to everyone else as possible.
-- **Dodging is weapon-aware.** Boost is saved for sidestepping a charging laser that is aimed at the bot. Bullets get a walking sidestep.
-- **A lose rule ends bad fights.** Outnumbered and under a health threshold, the bot backs into cover while still firing, with hysteresis so it doesn't flicker.
-- **A mode detector tells practice from free-for-all** using observations only: deaths it cannot explain, health lost to other mechs, beams landing on third parties, and being shot in the first seconds.
-- **A deadline guard watches the clock.** Wall-clock time is read in one place. Past 30 ms the optional stages, such as cover searches, are skipped and the bot answers with what it has.
-- **Malformed input never costs a decision.** Every observation is normalised first, so a missing or broken field falls back to the last good value.
+- **Movement intents, first match wins.** In order: leave the zone, break line of sight, retreat, loot, evade, heal, fight, collect cubes, stalk, walk to the zone, wander.
+- **Walk grid and A\*.** The 1 m height field becomes a 2 m grid with wall cells, clearance distances and connected components. Paths come from a capped A\* (8-connected, octile heuristic, extra cost for hugging walls). The motion layer re-plans periodically and recovers when the mech gets stuck.
+- **Computed line of sight.** A ray is blocked when the surface rises above it anywhere along the segment. Targeting and cover search use the same check.
+- **A tracker.** It remembers every mech's last position, velocity, health, weapons and charge state, the shots coming in, and who damaged whom.
+- **Selective fights.** The bot engages mechs that are close, weak, closing, aiming at it or hitting it, and leaves the rest alone so its health can regenerate.
+- **Stalking.** When it is idle and healthy, it walks to laser range of the nearest known enemy and picks a cell with sight of the target and as little exposure to everyone else as possible.
+- **A mode detector.** It tells practice from free-for-all using observations only: deaths it cannot explain, health lost to other mechs, beams landing on third parties, and being shot in the first seconds.
+- **A deadline guard.** Wall-clock time is read in one place. Past 30 ms the optional stages, such as cover searches, are skipped and the bot answers with what it has.
+- **Input normalisation.** Every observation is cleaned first, so a missing or broken field falls back to the last good value and never costs a decision.
 
-Every threshold lives in [`src/config.ts`](src/config.ts), with one flag per behaviour. That made each scoreboard experiment a one-line change.
+## What worked
 
-## What the scoreboard taught me
-
-The practice board was the only measurement I trusted, so I changed one thing at a time and kept what it rewarded.
-
-| Change | Result |
+| Change | Score |
 |---|---|
-| Stalk toward the nearest known enemy when idle and healthy | 4.58 → 4.98, the best score |
-| Hold the rim of the next circle and stand still | 4.19, reverted |
-| Remember cubes out of view and fetch kill drops | 4.54, reverted |
-| Pocket-edge hysteresis | 4.40, reverted |
+| First complete bot with the mode detector | 4.48 |
+| Selective engagement: fight only mechs that are close, weak or attacking | 4.58 |
+| Stalking toward the nearest known enemy when idle and healthy | **4.98** |
 
-The lessons I'd carry into the next one:
+Stalking was the biggest single gain, +0.40. Before it, the bot spent its quiet time idling. Points come from other mechs dying first, so time spent away from the fight earned nothing.
 
-- **Passive play loses.** Points come from others dying first, and house bots don't fight each other. Waiting scores nothing.
+The engineering held up too. The bot never missed the 50 ms budget in the organisers' conformance check, and the robustness tests kept malformed observations from ever crashing a match.
+
+## What failed
+
+Each of these was built, tested, submitted and then switched off because it scored lower than the build before it.
+
+| Experiment | Score | Against |
+|---|---|---|
+| Hold the rim of the next circle and stand still when idle | 4.19 | 4.58 |
+| Pocket-edge hysteresis | 4.40 | 4.58 |
+| Remember cubes out of view and fetch kill drops | 4.54 | 4.58 |
+| Squad core bundle: farm crates and drones, armour-first upgrades, visible-only targets, head aim, laser-only boost, lose-rule retreat | 4.83 | 4.98 |
+| Stalking with visible-only targets and head aim | 4.81 | 4.98 |
+| Stalking with farming only | 4.92 | 4.98 |
+| Squad core without the retreat rule | 4.94 | 4.98 |
+| Faster tempo: engage from further away and sooner | 4.90 | 4.98 |
+
+The pattern was the same each time. Anything that made the bot more careful, such as holding position, retreating or waiting for a clean shot, took it out of contact and cost points. After stalking, every variant landed between 4.81 and 4.98, which is inside the board's noise. I had reached a plateau that small changes could not break, and I ran out of time to find the structural change that would. 4.98 was not enough for the 32-team final.
+
+The squad-core pieces are still in the code, each behind its own flag in `src/config.ts`, all off.
+
+## What I learned
+
+- **Passive play loses.** The score rewards outliving others, and house bots don't fight each other, so waiting scores nothing.
 - **Changes under about 0.2 are noise.** Single-knob tuning can't be read on the board.
-- **A local simulator is a guard, not a judge.** Mine replays recorded matches around the bot. It catches crashes, stalls and time-outs well, and it can't predict a score, because nobody in a replay reacts.
-- **Prove a switch fires before shipping it.** A feature that never triggers in a real match scores exactly the same as not having it.
+- **A bundle hides its parts.** Six features shipped together scored 4.83, and it took four more submissions to see which pieces hurt.
+- **A local simulator is a guard, not a judge.** Mine replays recorded matches around the bot. It catches crashes, stalls and time-outs, and it can't predict a score, because nobody in a replay reacts.
+- **Study the field early.** I spent the first day tuning my own bot and looked at how the leading teams played too late to change direction.
 
 ## Project layout
 

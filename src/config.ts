@@ -80,9 +80,9 @@ export const PARAMS = {
   // debate-A squad core: one flag per piece so the board can leave each one out
   core: {
     // (a) farming: crates and drones when idle and healthy; wider cube detours
-    farmCrates: true,
-    farmDrones: true,
-    farmDetours: true,
+    farmCrates: false,
+    farmDrones: false,
+    farmDetours: false,
     farmHp: 0.5, // farm only above this HP fraction
     farmQuietS: 4, // and nobody hit us this recently
     farmRange: 150,
@@ -100,21 +100,21 @@ export const PARAMS = {
     detourFight: 40,
     detourFightHurt: 25, // HP at or under half
     // (b) upgrade order: plating, armor first (UPGRADES_SQUAD_CORE)
-    upgradeOrder: true,
+    upgradeOrder: false,
     // (c) target only mechs we can see this tick (current target keeps a short grace)
-    losTargets: true,
+    losTargets: false,
     losGraceS: 0.5,
     // (d) aim at the head when the centre ray is blocked
-    headAim: true,
+    headAim: false,
     headFrac: 0.85,
     // (e) boost only to sidestep a charging laser aimed at us; bullets get a walking sidestep
-    laserOnlyBoost: true,
+    laserOnlyBoost: false,
     laserAimTol: 0.14,
     laserDodgeEnergy: 20,
     bulletMoveW: 0.45,
     bulletDodgeW: 0.85,
     // (f) lose-rule retreat: re-armed every tick, 1.5 s hysteresis, keeps shooting
-    loseRetreat: true,
+    loseRetreat: false,
     loseNearRange: 160,
     lose2Hp: 0.55, // >= 2 mechs near and HP under this
     lose3Hp: 0.8, // >= 3 mechs near and HP under this

@@ -143,8 +143,8 @@ test("stalk: idle and healthy with a far house bot known -> walk to a cell ~115 
 test("stalk gates: opening, hurt, end game, flag off, out-of-circle prey -> no stalk", () => {
   const cases: [string, (b: Brain, o: any) => void][] = [
     ["opening", (_b, o) => (o.t = 10)],
-    ["hurt", (_b, o) => (o.self.hp = 900)],
-    ["end game", (_b, o) => ((o.zone.radius = 200), (o.zone.next_radius = 130), (o.zone.next_center = o.self.pos.slice(0, 2)), (o.zone.center = o.self.pos.slice(0, 2)))],
+    ["hurt", (_b, o) => (o.self.hp = (PARAMS.squad.stalkHp - 0.1) * 1400)],
+    ["end game", (_b, o) => ((o.zone.radius = PARAMS.squad.stalkUntilRadius + 60), (o.zone.next_radius = PARAMS.squad.stalkUntilRadius - 10), (o.zone.next_center = o.self.pos.slice(0, 2)), (o.zone.center = o.self.pos.slice(0, 2)))],
     ["flag off", () => (PARAMS.squad.stalk = false)],
   ]
   for (const [name, mod] of cases) {
@@ -171,7 +171,7 @@ test("stalk: prey already within stalk range -> null (engage rule takes over)", 
   const b = stalkBrain()
   const o = idleObs(b, 40, [])
   const [x, y] = o.self.pos
-  o.mechs = [prey(b, 7, x + 100, y)]
+  o.mechs = [prey(b, 7, x + PARAMS.squad.stalkRange - 15, y)]
   b.act(o)
   assert.equal(b.stalkGoal(o, 40.05, x, y, o.self.pos[2], 8, 1, () => true), null)
 })

@@ -7,6 +7,10 @@ import { pickUpgrade } from "../src/tactics/upgrades.ts"
 import { findCover } from "../src/tactics/position.ts"
 import { kitStream, ARENA } from "./helpers.ts"
 
+// These tests exercise each piece with it switched on, whatever the shipped defaults are; a test that
+// checks the off state flips its own flag with withFlags.
+for (const k of Object.keys(PARAMS.core) as (keyof typeof PARAMS.core)[]) if (typeof PARAMS.core[k] === "boolean") (PARAMS.core as any)[k] = true
+
 function brain() {
   const hello = kitStream()[0]
   hello.map.dir = ARENA
