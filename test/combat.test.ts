@@ -137,7 +137,7 @@ test("stalk: idle and healthy with a far house bot known -> walk to a cell ~115 
   const dPrey = Math.hypot(g.x - (x + 180), g.y - y)
   assert.ok(Math.abs(dPrey - PARAMS.squad.stalkRange) < 1, String(dPrey))
   assert.ok(Math.hypot(g.x - x, g.y - y) < 130) // our side of it (arc of +-0.6 rad), not past it
-  assert.ok(Math.hypot(a.move[0], a.move[1]) > 0.5)
+  assert.ok(Math.hypot(a.move![0], a.move![1]) > 0.5)
 })
 
 test("stalk gates: opening, hurt, end game, flag off, out-of-circle prey -> no stalk", () => {
